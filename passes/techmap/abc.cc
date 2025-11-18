@@ -126,6 +126,30 @@ bool markgroups;
 pool<std::string> enabled_gates;
 bool cmos_cost;
 
+// Baseline gate set coming from -g / scratchpad (global default).
+pool<std::string> base_enabled_gates;
+
+// Hard-coded per-module gate whitelist.
+// Start from base_enabled_gates and then specialize for certain modules.
+static void setup_enabled_gates_for_module(RTLIL::Module *mod)
+{
+	if (mod->name == ID(Sbox)) {
+		enabled_gates.clear();
+		enabled_gates.insert("NAND");
+		enabled_gates.insert("INV");
+	}
+
+	// else if (mod->name == ID(SOME_OTHER_MODULE)) {
+	// 	enabled_gates.clear();
+	// 	enabled_gates.insert("AND");
+	// 	enabled_gates.insert("OR");
+	// 	enabled_gates.insert("XOR");
+	// }
+
+	// For all other modules: leave enabled_gates as whatever we
+	// initialized from base_enabled_gates, i.e., the global/default -g.
+}
+
 struct AbcConfig
 {
 	std::string global_tempdir_name;
@@ -2351,7 +2375,11 @@ struct AbcPass : public Pass {
 			// enabled_gates.insert("NMUX");
 		}
 
-		emit_global_input_files(config);
+		// NEW: save the baseline
+        base_enabled_gates = enabled_gates;
+
+		// no longer runs once for the whole design
+		// emit_global_input_files(config);
 
 		for (auto mod : design->selected_modules())
 		{
@@ -2359,6 +2387,12 @@ struct AbcPass : public Pass {
 				log("Skipping module %s as it contains processes.\n", log_id(mod));
 				continue;
 			}
+
+			// NEW: rebuild gate whitelist for this module.
+            // Start from the global/default (-g) set, then apply hard-coded overrides.
+            enabled_gates = base_enabled_gates;
+            setup_enabled_gates_for_module(mod);
+            emit_global_input_files(config);
 
 			AbcSigMap assign_map;
 			assign_map.set(mod);
