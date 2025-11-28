@@ -936,6 +936,96 @@ struct abc_output_filter
 	}
 };
 
+static void add_module_dont_use_cells(const AbcConfig &config, RTLIL::Module *module, std::vector<std::string> &dont_use_cells)
+{
+	// Only special-case module \sbox
+	// Adjust ID(sbox) if the module is actually called SBOX, aes_sbox, etc.
+	std::string modname = log_id(module);
+	if (modname.find("sbox") == std::string::npos &&
+	    modname.find("mixcolumn") == std::string::npos)
+	return;
+
+	// Hard-coded rule:
+	//   keep only cells whose *liberty cell name* starts with "INV" or "NAND"
+	//   everything else becomes dont_use.
+	//
+	// Change/add prefixes here if needed, e.g. "NAND2" or "INV_X".
+	const char *allowed_prefixes[] = { "INV", "NAND", "BUF" };
+	const int num_prefixes = sizeof(allowed_prefixes) / sizeof(allowed_prefixes[0]);
+
+	for (const std::string &liberty_file : config.liberty_files)
+	{
+		FILE *f = fopen(liberty_file.c_str(), "rt");
+		if (f == nullptr) {
+			log_warning("ABC: cannot open liberty file '%s' while deriving dont_use cells for module %s: %s\n",
+					liberty_file.c_str(), log_id(module), strerror(errno));
+			continue;
+		}
+
+		char buf[4096];
+		while (fgets(buf, sizeof(buf), f) != nullptr)
+		{
+			char *p = buf;
+			while (isspace((unsigned char)*p))
+				p++;
+
+			// Look for lines starting with "cell"
+			if (strncmp(p, "cell", 4) != 0)
+				continue;
+
+			p += 4;
+			while (isspace((unsigned char)*p))
+				p++;
+			if (*p != '(')
+				continue;
+			p++;
+			while (isspace((unsigned char)*p))
+				p++;
+
+			// Extract cell name inside parentheses: cell (NAME) { ... }
+			char namebuf[256];
+			int n = 0;
+
+			// Optional quote around name: cell ("NAME") { ... }
+			if (*p == '"')
+				p++;
+
+			while (*p && *p != ')' && *p != '"' && !isspace((unsigned char)*p) && n < (int)sizeof(namebuf)-1) {
+				namebuf[n++] = *p++;
+			}
+			namebuf[n] = 0;
+			if (n == 0)
+				continue;
+
+			std::string cell(namebuf);
+
+			if (cell.find("DFF")   != std::string::npos ||
+			    cell.find("SDFF")  != std::string::npos ||
+			    cell.find("LATCH") != std::string::npos ||
+			    cell.find("FFR")   != std::string::npos)
+			{
+				continue;
+			}
+
+			// Check allowed prefixes
+			bool allowed = false;
+			for (int i = 0; i < num_prefixes; i++) {
+				const char *pref = allowed_prefixes[i];
+				if (cell.compare(0, (int)strlen(pref), pref) == 0) {
+					allowed = true;
+					break;
+				}
+			}
+
+			if (!allowed) {
+				dont_use_cells.push_back(cell);
+			}
+		}
+
+		fclose(f);
+	}
+}
+
 void AbcModuleState::prepare_module(RTLIL::Design *design, RTLIL::Module *module, AbcSigMap &assign_map, const std::vector<RTLIL::Cell*> &cells,
 	bool dff_mode, std::string clk_str)
 {
@@ -1021,13 +1111,48 @@ void AbcModuleState::prepare_module(RTLIL::Design *design, RTLIL::Module *module
 	log_header(design, "Extracting gate netlist of module `%s' to `%s/input.blif'..\n",
 			module->name.c_str(), replace_tempdir(run_abc.tempdir_name, run_abc.tempdir_name, config.show_tempdir).c_str());
 
+	// --- DEBUG: write module info into tempdir ---
+	{
+		std::string dbg_path = stringf("%s/debug.txt", run_abc.tempdir_name.c_str());
+		FILE *dbg = fopen(dbg_path.c_str(), "a");
+		if (dbg) {
+			// module name
+			fprintf(dbg, "=== Module: %s ===\n", log_id(module));
+			fclose(dbg);
+		}
+	}
+	// --- END DEBUG ---
+
 	std::string abc_script = stringf("read_blif \"%s/input.blif\"; ", run_abc.tempdir_name);
 
 	if (!config.liberty_files.empty() || !config.genlib_files.empty()) {
-		std::string dont_use_args;
-		for (std::string dont_use_cell : config.dont_use_cells) {
-			dont_use_args += stringf("-X \"%s\" ", dont_use_cell);
+		// Start from global -dont_use list (if any)
+		std::vector<std::string> module_dont_use_cells = config.dont_use_cells;
+
+		// Add hard-coded per-module dont_use rules
+		add_module_dont_use_cells(config, module, module_dont_use_cells);
+
+		// --- DEBUG: dump dont_use cells into the same tempdir/debug.txt ---
+		{
+			std::string dbg_path = stringf("%s/debug.txt", run_abc.tempdir_name.c_str());
+			FILE *dbg = fopen(dbg_path.c_str(), "a");
+			if (dbg) {
+				fprintf(dbg, "dont_use cells for module %s (total %zu):\n",
+						log_id(module), module_dont_use_cells.size());
+				for (const std::string &cell : module_dont_use_cells) {
+					fprintf(dbg, "  - %s\n", cell.c_str());
+				}
+				fprintf(dbg, "\n");
+				fclose(dbg);
+			}
 		}
+		// --- END DEBUG ---
+
+		std::string dont_use_args;
+		for (const std::string &dont_use_cell : module_dont_use_cells) {
+			dont_use_args += stringf("-X \"%s\" ", dont_use_cell.c_str());
+		}
+
 		bool first_lib = true;
 		for (std::string liberty_file : config.liberty_files) {
 			abc_script += stringf("read_lib %s %s -w \"%s\" ; ", dont_use_args, first_lib ? "" : "-m", liberty_file);
