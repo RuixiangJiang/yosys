@@ -1213,6 +1213,12 @@ void AbcModuleState::prepare_module(RTLIL::Design *design, RTLIL::Module *module
 		abc_script = abc_script.substr(0, pos) + config.lutin_shared + abc_script.substr(pos+3);
 	if (config.abc_dress)
 		abc_script += stringf("; dress \"%s/input.blif\"", run_abc.tempdir_name);
+	abc_script += stringf("; stime");
+	abc_script += stringf("; buffer -N 16");
+	abc_script += stringf("; upsize -D 5000");
+	abc_script += stringf("; dnsize -D 5000");
+	abc_script += stringf("; stime");
+	abc_script += stringf("; print_fanio");
 	abc_script += stringf("; write_blif %s/output.blif", run_abc.tempdir_name);
 	abc_script = add_echos_to_abc_cmd(abc_script);
 #if defined(__linux__) && !defined(YOSYS_DISABLE_SPAWN)
