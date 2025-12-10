@@ -29,8 +29,13 @@
 // Kahn, Arthur B. (1962), "Topological sorting of large networks", Communications of the ACM 5 (11): 558-562, doi:10.1145/368996.369025
 // http://en.wikipedia.org/wiki/Topological_sorting
 
-#define ABC_COMMAND_LIB "strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash; &get -n; &dch -f; &nf {D}; &put"
-#define ABC_COMMAND_CTR "strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash; &get -n; &dch -f; &nf {D}; &put; buffer; upsize {D}; dnsize {D}; stime -p"
+#define ABC_COMMAND_PowerOptimization "ps -p; if -p; mfs -p; ps -p;"
+#define ABC_COMMAND_LIB "strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash;" \
+						ABC_COMMAND_PowerOptimization \
+						"&get -n; &dch -f; &nf {D}; &put"
+#define ABC_COMMAND_CTR "strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash;" \
+						ABC_COMMAND_PowerOptimization \
+						"&get -n; &dch -f; &nf {D}; &put; buffer; upsize {D}; dnsize {D}; stime -p"
 #define ABC_COMMAND_LUT "strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash; dch -f; if; mfs2"
 #define ABC_COMMAND_SOP "strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash; dch -f; cover {I} {P}"
 #define ABC_COMMAND_DFL "strash; &get -n; &fraig -x; &put; scorr; dc2; dretime; strash; &get -n; &dch -f; &nf {D}; &put"
@@ -1219,6 +1224,8 @@ void AbcModuleState::prepare_module(RTLIL::Design *design, RTLIL::Module *module
 	abc_script += stringf("; dnsize -D 5000");
 	abc_script += stringf("; stime");
 	abc_script += stringf("; print_fanio");
+	abc_script += stringf("; print_gates");
+	abc_script += stringf("; ps -p");
 	abc_script += stringf("; write_blif %s/output.blif", run_abc.tempdir_name);
 	abc_script = add_echos_to_abc_cmd(abc_script);
 #if defined(__linux__) && !defined(YOSYS_DISABLE_SPAWN)
